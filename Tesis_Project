@@ -1,0 +1,122 @@
+#include <Arduino.h>
+#define TRIGGER_PIN1 2
+#define ECHO_PIN1 4
+#define TRIGGER_PIN2 32
+#define ECHO_PIN2 33
+#define FLOW_METER_PIN 26
+const int relay = 27;
+bool pumpStatus = false;
+long duration1, duration2;
+int distance1, distance2, distance3, distance4;
+
+const float speedOfSound = 0.034;  // Kecepatan suara dalam cm/us
+const int pulseWidth = 10;  // Mikrodetik untuk pulsa pemicu
+
+// Variabel flow meter
+#define FlowMeterPulsePerSecondPerLiter 5.5
+float FlowCalculationDuration = 1000;
+volatile unsigned long FlowCalculationStartTime;
+volatile unsigned long PulseCount; // Pastikan PulseCount adalah volatile
+float flowRate = 0.0;
+double totalVolume = 1.8;
+
+void pulseCounter2() {
+  PulseCount++;
+}
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(relay, OUTPUT);
+  pinMode(TRIGGER_PIN1, OUTPUT);
+  pinMode(ECHO_PIN1, INPUT);
+  pinMode(TRIGGER_PIN2, OUTPUT);
+  pinMode(ECHO_PIN2, INPUT);
+  pinMode(FLOW_METER_PIN, INPUT_PULLUP);  // Pin digital 26 sebagai input dengan pull-up
+  attachInterrupt(digitalPinToInterrupt(FLOW_METER_PIN), pulseCounter2, RISING);  // Pasang interrupt ke pin 26
+  FlowCalculationStartTime = millis();
+}
+
+void loop() {
+  // Sensor Ultrasonik 1
+  digitalWrite(TRIGGER_PIN1, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIGGER_PIN1, HIGH);
+  delayMicroseconds(pulseWidth);
+  digitalWrite(TRIGGER_PIN1, LOW);
+
+  duration1 = pulseIn(ECHO_PIN1, HIGH);
+  if (duration1 > 0) {
+    distance1 = duration1 * speedOfSound / 2;
+    distance2 = 29.5-(0.18263 + 1.05127 * distance1); // Hitung jarak sebenarnya
+    Serial.print("Tinggi air tangki utama: ");
+    Serial.print(distance2);
+    Serial.println(" cm");
+  } else {
+    Serial.println("Sensor 1: Pengukuran gagal");
+  }
+
+  delay(500);
+
+  // Sensor Ultrasonik 2
+  digitalWrite(TRIGGER_PIN2, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIGGER_PIN2, HIGH);
+  delayMicroseconds(pulseWidth);
+  digitalWrite(TRIGGER_PIN2, LOW);
+  
+    duration2 = pulseIn(ECHO_PIN1, HIGH);
+  if (duration1 > 0) {
+    distance3 = duration2 * speedOfSound / 2;
+    distance4 = 31-(-0.81697 + 1.11115 * distance3); // Hitung jarak sebenarnya
+    Serial.print("Tinggi air tangki cadangan: ");
+    Serial.print(distance4);
+    Serial.println(" cm");
+  } else {
+    Serial.println("Sensor 2: Pengukuran gagal");
+  }
+
+  delay(500);
+
+  // Tampilkan aliran air dari flow meter
+  if (millis() - FlowCalculationStartTime > FlowCalculationDuration) {
+    if (PulseCount == 0) {
+      flowRate = 0.0;  // Atur laju aliran ke nol jika tidak ada pulsa yang dihitung
+    } else {
+      flowRate = PulseCount / (2 * FlowMeterPulsePerSecondPerLiter * (FlowCalculationDuration / 1000.0));
+    }
+    
+    // Terapkan kalibrasi: y = 1.5345x + 0.0486
+    flowRate = 0.0486 + 1.5345 * flowRate;
+
+    totalVolume += (flowRate / 60.0);  // Tambahkan jumlah air yang melewati detik ini ke volume total dalam liter
+
+    Serial.print("Laju aliran: ");
+    Serial.print(flowRate, 1);  // Cetak dengan 1 tempat desimal
+    Serial.println(" L/menit");
+
+    Serial.print("Volume Total: ");
+    Serial.print(totalVolume, 1);  // Cetak dengan 1 tempat desimal
+    Serial.println(" L");
+
+    FlowCalculationStartTime = millis();
+    PulseCount = 0;
+    delay(100);
+  }
+
+  // Kontrol relay
+  if (distance4 <= 6) { // Prioritaskan untuk mematikan pompa jika distance4 <= 6
+    digitalWrite(relay, HIGH);
+    Serial.println("Pompa mati karena tinggi air 2 mencapai 6 cm atau kurang");
+    pumpStatus = false;
+  } else if (distance2 >= 6 && distance2 <= 23) {
+    digitalWrite(relay, LOW);
+    Serial.println("Pompa menyala");
+    pumpStatus = true;
+  } else {
+    digitalWrite(relay, HIGH);
+    Serial.println("Pompa mati");
+    pumpStatus = false;
+  }
+
+  delay(1000); // Penundaan untuk pengukuran sensor
+}
